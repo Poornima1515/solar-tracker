@@ -1,0 +1,112 @@
+{
+  "_comment": "Feature configuration for the XGBoost irradiance prediction model.",
+  "_note": "Set 'enabled: true' only for features present in your training dataset.",
+
+  "target": "ghi",
+
+  "datetime_column": "timestamp",
+
+  "features": {
+    "hour": {
+      "enabled": true,
+      "type": "engineered",
+      "description": "Hour of day (0–23) extracted from timestamp"
+    },
+    "month": {
+      "enabled": true,
+      "type": "engineered",
+      "description": "Month (1–12) extracted from timestamp"
+    },
+    "day_of_year": {
+      "enabled": true,
+      "type": "engineered",
+      "description": "Day of year (1–365) for seasonal variation"
+    },
+    "solar_elevation": {
+      "enabled": true,
+      "type": "engineered",
+      "description": "Solar elevation angle (degrees) from pvlib"
+    },
+    "solar_azimuth": {
+      "enabled": true,
+      "type": "engineered",
+      "description": "Solar azimuth angle (degrees) from pvlib"
+    },
+    "solar_zenith": {
+      "enabled": true,
+      "type": "engineered",
+      "description": "Solar zenith angle (degrees) from pvlib"
+    },
+    "clearsky_ghi": {
+      "enabled": true,
+      "type": "engineered",
+      "description": "Clear-sky GHI from pvlib Ineichen model (W/m²)"
+    },
+    "clearsky_dni": {
+      "enabled": true,
+      "type": "engineered",
+      "description": "Clear-sky DNI from pvlib Ineichen model (W/m²)"
+    },
+    "clearsky_dhi": {
+      "enabled": true,
+      "type": "engineered",
+      "description": "Clear-sky DHI from pvlib Ineichen model (W/m²)"
+    },
+    "temperature": {
+      "enabled": true,
+      "type": "measured",
+      "description": "Ambient temperature (°C) from BME280 or weather data",
+      "fill_strategy": "median"
+    },
+    "humidity": {
+      "enabled": true,
+      "type": "measured",
+      "description": "Relative humidity (%) from BME280 or weather data",
+      "fill_strategy": "median"
+    },
+    "pressure": {
+      "enabled": false,
+      "type": "measured",
+      "description": "Atmospheric pressure (hPa) from BME280 or weather data",
+      "fill_strategy": "median"
+    },
+    "wind_speed": {
+      "enabled": false,
+      "type": "measured",
+      "description": "Wind speed (m/s) — only available in some datasets",
+      "fill_strategy": "median"
+    },
+    "dni": {
+      "enabled": false,
+      "type": "measured",
+      "description": "Direct Normal Irradiance from weather station (W/m²)",
+      "fill_strategy": "drop"
+    },
+    "dhi": {
+      "enabled": false,
+      "type": "measured",
+      "description": "Diffuse Horizontal Irradiance from weather station (W/m²)",
+      "fill_strategy": "drop"
+    }
+  },
+
+  "preprocessing": {
+    "drop_nighttime": true,
+    "nighttime_threshold_ghi": 10,
+    "clip_ghi_min": 0,
+    "clip_ghi_max": 1400,
+    "clip_temperature_min": -10,
+    "clip_temperature_max": 60,
+    "clip_humidity_min": 0,
+    "clip_humidity_max": 100,
+    "remove_duplicates": true,
+    "scale_features": true,
+    "scaler_type": "StandardScaler"
+  },
+
+  "split": {
+    "method": "time_series",
+    "test_fraction": 0.2,
+    "shuffle": false
+  }
+}

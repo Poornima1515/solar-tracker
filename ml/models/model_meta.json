@@ -1,0 +1,48 @@
+{
+  "model_type": "XGBoost Regressor",
+  "model_version": "9fef8300fcfd",
+  "target_variable": "ghi",
+  "target_unit": "W/m\u00b2",
+  "training_date": "2026-08-23T02:43:59.435798+00:00",
+  "num_training_records": 8771,
+  "num_train": 7016,
+  "num_test": 1755,
+  "features": [
+    "hour",
+    "month",
+    "day_of_year",
+    "solar_elevation",
+    "solar_azimuth",
+    "solar_zenith",
+    "clearsky_ghi",
+    "clearsky_dni",
+    "clearsky_dhi",
+    "temperature",
+    "humidity"
+  ],
+  "hyperparameters": {
+    "n_estimators": 300,
+    "max_depth": 6,
+    "learning_rate": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8
+  },
+  "metrics": {
+    "mae": 45.604,
+    "rmse": 68.995,
+    "r2": 0.944
+  },
+  "feature_importance": {
+    "hour": 0.6143169403076172,
+    "solar_elevation": 0.08667977154254913,
+    "clearsky_ghi": 0.07566692680120468,
+    "solar_zenith": 0.05982962250709534,
+    "temperature": 0.05092465132474899,
+    "humidity": 0.04380383715033531,
+    "solar_azimuth": 0.02416461706161499,
+    "clearsky_dni": 0.01823432184755802,
+    "clearsky_dhi": 0.011435733176767826,
+    "month": 0.007659634109586477,
+    "day_of_year": 0.007283908315002918
+  }
+}
