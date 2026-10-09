@@ -9,6 +9,7 @@ Startup sequence:
   5. Serve
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -58,12 +59,31 @@ async def lifespan(app: FastAPI):
     await scheduler.start()
     app.state.scheduler = scheduler
 
+    # Start simulation engine
+    from app.services.simulation_engine import get_simulation_engine
+    engine = get_simulation_engine()
+    engine.start()
+    app.state.sim_engine = engine
+    logger.info("Simulation engine started.")
+
+    # Start WebSocket broadcast loop
+    from app.api.ws import broadcast_loop
+    broadcast_task = asyncio.create_task(broadcast_loop())
+    app.state.broadcast_task = broadcast_task
+    logger.info("WebSocket broadcast loop started.")
+
     logger.info("Startup complete. Serving requests.")
     yield
 
     # Shutdown
     logger.info("Solar Tracker backend shutting down…")
     await scheduler.stop()
+    engine.stop()
+    broadcast_task.cancel()
+    try:
+        await broadcast_task
+    except asyncio.CancelledError:
+        pass
 
 
 # ─── Application ──────────────────────────────────────────────────────────────
@@ -95,13 +115,17 @@ app.add_middleware(
 # ─── Routers ──────────────────────────────────────────────────────────────────
 
 from app.api import device, telemetry, control, ml, comparison, cost  # noqa: E402
+from app.api import simulation, services, ws  # noqa: E402
 
-app.include_router(device.router,     prefix="/api/device",     tags=["Device"])
-app.include_router(telemetry.router,  prefix="/api/telemetry",  tags=["Telemetry"])
-app.include_router(control.router,    prefix="/api/control",    tags=["Control"])
-app.include_router(ml.router,         prefix="/api/ml",         tags=["ML"])
-app.include_router(comparison.router, prefix="/api/comparison", tags=["Comparison"])
-app.include_router(cost.router,       prefix="/api/cost",       tags=["Cost"])
+app.include_router(device.router,     prefix="/api/device",       tags=["Device"])
+app.include_router(telemetry.router,  prefix="/api/telemetry",    tags=["Telemetry"])
+app.include_router(control.router,    prefix="/api/control",      tags=["Control"])
+app.include_router(ml.router,         prefix="/api/ml",           tags=["ML"])
+app.include_router(comparison.router, prefix="/api/comparison",   tags=["Comparison"])
+app.include_router(cost.router,       prefix="/api/cost",         tags=["Cost"])
+app.include_router(simulation.router, prefix="/api/simulation",   tags=["Simulation"])
+app.include_router(services.router,   prefix="/api/services",     tags=["Services"])
+app.include_router(ws.router,         prefix="/api/ws",           tags=["WebSocket"])
 
 
 # ─── Root ─────────────────────────────────────────────────────────────────────

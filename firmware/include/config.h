@@ -41,6 +41,10 @@
 // ESP32-S3 ADC is 12-bit (0–4095)
 #define ADC_MAX         4095
 
+// ─── Limit Switches (Active LOW with INPUT_PULLUP) ────────────────────────────
+#define PIN_LIMIT_MIN   6
+#define PIN_LIMIT_MAX   7
+
 // ─── Timing ───────────────────────────────────────────────────────────────────
 // Telemetry send interval (ms)
 #define TELEMETRY_INTERVAL_MS   10000

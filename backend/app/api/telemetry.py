@@ -123,6 +123,12 @@ async def ingest_telemetry(
         )
         db.add(electrical)
 
+    import app.services.tracking_service as tracker
+    if payload.current_angle is not None:
+        tracker.set_last_known_angle(payload.current_angle)
+    if payload.mode:
+        tracker.set_current_mode(payload.mode)
+
     # Panel position
     if payload.current_angle is not None or payload.mode is not None:
         position = PanelPosition(
@@ -130,7 +136,7 @@ async def ingest_telemetry(
             timestamp=now,
             current_angle=payload.current_angle,
             target_angle=payload.target_angle,
-            mode=payload.mode or "auto",
+            mode=payload.mode or tracker.get_current_mode(),
             data_source=source,
         )
         db.add(position)
@@ -146,8 +152,47 @@ async def ingest_telemetry(
 async def get_latest_telemetry(db: Session = Depends(get_db)):
     """
     Returns the most recent sensor, electrical, and position values.
-    If demo_mode is enabled and no live data exists, returns labelled demo data.
+    If system_source is simulation, returns simulation engine snapshot.
+    If system_source is real_hardware, returns real live readings or marks disconnected.
     """
+    from app.api.control import get_system_source
+    from app.services.simulation_engine import get_simulation_engine
+    import app.services.tracking_service as tracker
+
+    source = get_system_source()
+
+    if source == "simulation":
+        engine = get_simulation_engine()
+        snap = engine.get_snapshot()
+        if snap:
+            return LatestTelemetryResponse(
+                timestamp=datetime.fromisoformat(snap.sim_time),
+                temperature=snap.temperature,
+                humidity=snap.humidity,
+                pressure=snap.pressure,
+                irradiance=snap.irradiance,
+                irradiance_source="simulation",
+                ldr_left=None,
+                ldr_right=None,
+                voltage=snap.voltage,
+                current=snap.current_a,
+                power=snap.power_w,
+                energy_today=snap.energy_today_wh,
+                current_angle=snap.current_angle,
+                target_angle=snap.target_angle,
+                mode=snap.mode,
+                motor_status=snap.motor.status.value if hasattr(snap.motor.status, "value") else snap.motor.status,
+                auto_status=getattr(snap, "auto_status", "idle"),
+                min_limit=getattr(snap, "min_limit_triggered", False),
+                max_limit=getattr(snap, "max_limit_triggered", False),
+                ina219_ok=not ("Sensor Failure" in snap.active_faults),
+                best_measured_angle=getattr(snap, "best_measured_angle", None),
+                best_measured_power=getattr(snap, "best_measured_power", None),
+                system_source="simulation",
+                data_source="simulation",
+                hardware_online=False,
+            )
+
     # Check hardware online status
     device = db.query(Device).order_by(Device.id).first()
     hardware_online = False
@@ -155,12 +200,36 @@ async def get_latest_telemetry(db: Session = Depends(get_db)):
         age = (_now_naive() - device.last_seen).total_seconds()
         hardware_online = age < settings.device_offline_threshold_seconds
 
-    if not hardware_online and settings.demo_mode:
-        demo = get_demo_telemetry()
-        demo["hardware_online"] = False
-        return LatestTelemetryResponse(**demo)
+    if not hardware_online:
+        return LatestTelemetryResponse(
+            timestamp=_now(),
+            temperature=None,
+            humidity=None,
+            pressure=None,
+            irradiance=None,
+            irradiance_source=None,
+            ldr_left=None,
+            ldr_right=None,
+            voltage=None,
+            current=None,
+            power=None,
+            energy_today=None,
+            current_angle=tracker.get_last_known_angle(),
+            target_angle=None,
+            mode=tracker.get_current_mode(),
+            motor_status="idle",
+            auto_status="idle",
+            min_limit=False,
+            max_limit=False,
+            ina219_ok=False,
+            best_measured_angle=None,
+            best_measured_power=None,
+            system_source="real_hardware",
+            data_source="real",
+            hardware_online=False,
+        )
 
-    # Fetch latest live rows
+    # Fetch latest live rows from real hardware
     sensor = (
         db.query(SensorReading)
         .filter(SensorReading.data_source == DataSource.live)
@@ -186,6 +255,8 @@ async def get_latest_telemetry(db: Session = Depends(get_db)):
     elif electrical:
         ts = electrical.timestamp
 
+    curr_ang = position.current_angle if position else tracker.get_last_known_angle()
+
     return LatestTelemetryResponse(
         timestamp=ts,
         temperature=sensor.temperature if sensor else None,
@@ -199,9 +270,17 @@ async def get_latest_telemetry(db: Session = Depends(get_db)):
         current=electrical.current if electrical else None,
         power=electrical.power if electrical else None,
         energy_today=electrical.energy if electrical else None,
-        current_angle=position.current_angle if position else None,
+        current_angle=curr_ang,
         target_angle=position.target_angle if position else None,
-        mode=position.mode if position else None,
+        mode=tracker.get_current_mode(),
+        motor_status="idle",
+        auto_status="optimizing" if tracker.get_current_mode() == "auto" else "idle",
+        min_limit=(curr_ang is not None and curr_ang <= settings.min_panel_angle),
+        max_limit=(curr_ang is not None and curr_ang >= settings.max_panel_angle),
+        ina219_ok=(electrical is not None and electrical.voltage is not None and electrical.voltage > 0.0),
+        best_measured_angle=None,
+        best_measured_power=None,
+        system_source="real_hardware",
         data_source="live",
         hardware_online=hardware_online,
     )

@@ -1,10 +1,19 @@
-# Environment
+# ── Environment & Secrets ─────────────────────────────────────────────────────
 .env
 *.env
 .env.local
 .env.*.local
+*.pem
 
-# Python
+# ── SQLite Databases & WAL/SHM Temp Files ─────────────────────────────────────
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# ── Python & Virtual Environments ──────────────────────────────────────────────
 __pycache__/
 *.py[cod]
 *$py.class
@@ -13,8 +22,9 @@ __pycache__/
 venv/
 env/
 .venv/
-dist/
+ENV/
 build/
+dist/
 *.egg-info/
 .eggs/
 pip-log.txt
@@ -26,36 +36,43 @@ htmlcov/
 .coverage
 *.cover
 
-# ML models (tracked separately or via DVC)
+# ── Machine Learning Models & Data ─────────────────────────────────────────────
 ml/models/*.joblib
 ml/models/*.pkl
 ml/data/raw/
 ml/data/processed/
 
-# Node / Frontend
+# ── Node / Frontend Dependencies & Build ──────────────────────────────────────
 node_modules/
+frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 *.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
-# SQLite DB file
-*.db
-*.sqlite
-*.sqlite3
+# ── Arduino / PlatformIO ──────────────────────────────────────────────────────
+firmware/.pio/
+firmware/.pioenvs/
+firmware/.piolibdeps/
 
-# IDE
-.vscode/
+# ── Operating System & IDE Files ─────────────────────────────────────────────
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
 .idea/
 *.swp
 *.swo
 .DS_Store
 Thumbs.db
+ehthumbs.db
+Desktop.ini
 
-# PlatformIO
-firmware/.pio/
-firmware/.pioenvs/
-firmware/.piolibdeps/
-
-# Logs
+# ── Logs & Scratch Files ──────────────────────────────────────────────────────
 *.log
 logs/
+scratch/

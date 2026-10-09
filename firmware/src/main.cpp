@@ -72,12 +72,24 @@ void handleHealth();
 void handleStatus();
 void handleTelemetry();
 void handleTilt();
+void handleJog();
 void handleStop();
 void handleMode();
 void handleNotFound();
 void sendTelemetry();
 void sendHeartbeat();
 void updateEnergy(float powerW);
+bool isMinLimitTriggered();
+bool isMaxLimitTriggered();
+
+// ─── Limit switch helpers (Active LOW) ────────────────────────────────────────
+inline bool isMinLimitTriggered() {
+    return digitalRead(PIN_LIMIT_MIN) == LOW;
+}
+
+inline bool isMaxLimitTriggered() {
+    return digitalRead(PIN_LIMIT_MAX) == LOW;
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 // SETUP
@@ -119,6 +131,11 @@ void setup() {
     // ── ADC (LDRs) ────────────────────────────────────────────────────────
     analogReadResolution(12);    // 12-bit ADC on ESP32-S3
     Serial.printf("[LDR] GPIO%d (left) GPIO%d (right)\n", PIN_LDR_LEFT, PIN_LDR_RIGHT);
+
+    // ── Limit Switches ───────────────────────────────────────────────────
+    pinMode(PIN_LIMIT_MIN, INPUT_PULLUP);
+    pinMode(PIN_LIMIT_MAX, INPUT_PULLUP);
+    Serial.printf("[Limits] Min GPIO%d, Max GPIO%d configured (INPUT_PULLUP)\n", PIN_LIMIT_MIN, PIN_LIMIT_MAX);
 
     // ── Wi-Fi ─────────────────────────────────────────────────────────────
     connectWiFi();
@@ -211,6 +228,7 @@ void initHTTPServer() {
     server.on("/status",    HTTP_GET,  handleStatus);
     server.on("/telemetry", HTTP_GET,  handleTelemetry);
     server.on("/tilt",      HTTP_POST, handleTilt);
+    server.on("/jog",       HTTP_POST, handleJog);
     server.on("/stop",      HTTP_POST, handleStop);
     server.on("/mode",      HTTP_POST, handleMode);
     server.onNotFound(handleNotFound);
@@ -230,7 +248,7 @@ void handleHealth() {
 
 // ─── GET /status ──────────────────────────────────────────────────────────────
 void handleStatus() {
-    StaticJsonDocument<256> doc;
+    StaticJsonDocument<384> doc;
     doc["device_id"]       = 1;
     doc["firmware"]        = FIRMWARE_VERSION;
     doc["device_name"]     = DEVICE_NAME;
@@ -240,7 +258,11 @@ void handleStatus() {
     doc["wifi_rssi"]       = WiFi.RSSI();
     doc["uptime_s"]        = g_uptimeSeconds;
     doc["current_angle"]   = g_currentAngle;
+    doc["target_angle"]    = g_targetAngle;
     doc["mode"]            = g_mode;
+    doc["min_limit"]       = isMinLimitTriggered();
+    doc["max_limit"]       = isMaxLimitTriggered();
+    doc["motor_status"]    = g_isMoving ? "moving" : "idle";
     String body;
     serializeJson(doc, body);
     server.send(200, "application/json", body);
@@ -276,7 +298,7 @@ void handleTelemetry() {
     ldrData.ldr_right = analogRead(PIN_LDR_RIGHT);
     ldrData.valid     = true;
 
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<640> doc;
     doc["temperature"]   = envData.valid  ? envData.temperature : (float)0;
     doc["humidity"]      = envData.valid  ? envData.humidity    : (float)0;
     doc["pressure"]      = envData.valid  ? envData.pressure    : (float)0;
@@ -289,6 +311,10 @@ void handleTelemetry() {
     doc["current_angle"] = g_currentAngle;
     doc["target_angle"]  = g_targetAngle;
     doc["mode"]          = g_mode;
+    doc["min_limit"]     = isMinLimitTriggered();
+    doc["max_limit"]     = isMaxLimitTriggered();
+    doc["motor_status"]  = g_isMoving ? "moving" : "idle";
+    doc["ina219_ok"]     = g_ina219_ok;
     doc["timestamp_ms"]  = millis();
 
     String body;
@@ -321,18 +347,116 @@ void handleTilt() {
     if (requestedAngle < SERVO_MIN_ANGLE) requestedAngle = SERVO_MIN_ANGLE;
     if (requestedAngle > SERVO_MAX_ANGLE) requestedAngle = SERVO_MAX_ANGLE;
 
+    // Check limit switches before starting motion
+    if (requestedAngle > g_currentAngle && isMaxLimitTriggered()) {
+        StaticJsonDocument<192> resp;
+        resp["success"]       = false;
+        resp["current_angle"] = g_currentAngle;
+        resp["target_angle"]  = requestedAngle;
+        resp["status"]        = "max_limit_reached";
+        resp["min_limit"]     = isMinLimitTriggered();
+        resp["max_limit"]     = true;
+        String body;
+        serializeJson(resp, body);
+        server.send(200, "application/json", body);
+        return;
+    }
+    if (requestedAngle < g_currentAngle && isMinLimitTriggered()) {
+        StaticJsonDocument<192> resp;
+        resp["success"]       = false;
+        resp["current_angle"] = g_currentAngle;
+        resp["target_angle"]  = requestedAngle;
+        resp["status"]        = "min_limit_reached";
+        resp["min_limit"]     = true;
+        resp["max_limit"]     = isMaxLimitTriggered();
+        String body;
+        serializeJson(resp, body);
+        server.send(200, "application/json", body);
+        return;
+    }
+
     g_targetAngle = requestedAngle;
 
     // Move servo safely (stepped)
     bool moved = movePanelServo(requestedAngle);
 
-    StaticJsonDocument<128> resp;
+    StaticJsonDocument<192> resp;
     resp["success"]       = moved;
     resp["current_angle"] = g_currentAngle;
     resp["target_angle"]  = requestedAngle;
-    resp["status"]        = moved ? "position_reached" : "error";
-    if (!moved) resp["error"] = "Servo movement failed";
+    resp["status"]        = moved ? "position_reached" : (isMaxLimitTriggered() ? "max_limit_stopped" : (isMinLimitTriggered() ? "min_limit_stopped" : "error"));
+    resp["min_limit"]     = isMinLimitTriggered();
+    resp["max_limit"]     = isMaxLimitTriggered();
+    if (!moved && !isMaxLimitTriggered() && !isMinLimitTriggered()) resp["error"] = "Servo movement failed";
 
+    String body;
+    serializeJson(resp, body);
+    server.send(200, "application/json", body);
+}
+
+// ─── POST /jog ───────────────────────────────────────────────────────────────
+void handleJog() {
+    float step = 5.0f;
+    String direction = "up";
+
+    if (server.hasArg("plain")) {
+        StaticJsonDocument<128> req;
+        DeserializationError err = deserializeJson(req, server.arg("plain"));
+        if (!err) {
+            if (req.containsKey("step")) {
+                step = req["step"].as<float>();
+                if (step <= 0.0f) step = 5.0f;
+            }
+            if (req.containsKey("direction")) {
+                direction = req["direction"].as<String>();
+            }
+        }
+    }
+
+    float target = g_currentAngle;
+    if (direction.equalsIgnoreCase("up")) {
+        if (isMaxLimitTriggered() || g_currentAngle >= SERVO_MAX_ANGLE) {
+            StaticJsonDocument<192> resp;
+            resp["success"]       = false;
+            resp["status"]        = "max_limit_reached";
+            resp["current_angle"] = g_currentAngle;
+            resp["target_angle"]  = g_currentAngle;
+            resp["min_limit"]     = isMinLimitTriggered();
+            resp["max_limit"]     = true;
+            String body;
+            serializeJson(resp, body);
+            server.send(200, "application/json", body);
+            return;
+        }
+        target = g_currentAngle + step;
+    } else {
+        if (isMinLimitTriggered() || g_currentAngle <= SERVO_MIN_ANGLE) {
+            StaticJsonDocument<192> resp;
+            resp["success"]       = false;
+            resp["status"]        = "min_limit_reached";
+            resp["current_angle"] = g_currentAngle;
+            resp["target_angle"]  = g_currentAngle;
+            resp["min_limit"]     = true;
+            resp["max_limit"]     = isMaxLimitTriggered();
+            String body;
+            serializeJson(resp, body);
+            server.send(200, "application/json", body);
+            return;
+        }
+        target = g_currentAngle - step;
+    }
+
+    target = constrain(target, SERVO_MIN_ANGLE, SERVO_MAX_ANGLE);
+    g_targetAngle = target;
+    bool moved = movePanelServo(target);
+
+    StaticJsonDocument<192> resp;
+    resp["success"]       = moved;
+    resp["current_angle"] = g_currentAngle;
+    resp["target_angle"]  = target;
+    resp["status"]        = moved ? "jog_complete" : (isMaxLimitTriggered() ? "max_limit_stopped" : (isMinLimitTriggered() ? "min_limit_stopped" : "jog_stopped"));
+    resp["min_limit"]     = isMinLimitTriggered();
+    resp["max_limit"]     = isMaxLimitTriggered();
     String body;
     serializeJson(resp, body);
     server.send(200, "application/json", body);
@@ -343,9 +467,12 @@ void handleStop() {
     panelServo.write((int)g_currentAngle);  // Hold current position
     g_isMoving = false;
 
-    StaticJsonDocument<64> resp;
+    StaticJsonDocument<128> resp;
     resp["success"]       = true;
+    resp["status"]        = "stopped";
     resp["current_angle"] = g_currentAngle;
+    resp["min_limit"]     = isMinLimitTriggered();
+    resp["max_limit"]     = isMaxLimitTriggered();
     String body;
     serializeJson(resp, body);
     server.send(200, "application/json", body);
@@ -395,6 +522,20 @@ bool movePanelServo(float targetAngle) {
     while (abs(g_currentAngle - targetAngle) > 0.5f) {
         if (millis() - startMs > TIMEOUT_MS) {
             Serial.println("[Servo] Movement timeout!");
+            g_isMoving = false;
+            return false;
+        }
+
+        // Limit switch active safety check
+        if (step > 0 && isMaxLimitTriggered()) {
+            Serial.println("[Servo] Max limit switch triggered during motion! Stopping.");
+            panelServo.write((int)g_currentAngle);
+            g_isMoving = false;
+            return false;
+        }
+        if (step < 0 && isMinLimitTriggered()) {
+            Serial.println("[Servo] Min limit switch triggered during motion! Stopping.");
+            panelServo.write((int)g_currentAngle);
             g_isMoving = false;
             return false;
         }
@@ -460,7 +601,7 @@ void sendTelemetry() {
     ldrR = analogRead(PIN_LDR_RIGHT);
 
     // Build JSON
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<640> doc;
     doc["device_id"]     = 1;
     doc["temperature"]   = temp;
     doc["humidity"]      = hum;
@@ -474,6 +615,10 @@ void sendTelemetry() {
     doc["current_angle"] = g_currentAngle;
     doc["target_angle"]  = g_targetAngle;
     doc["mode"]          = g_mode;
+    doc["min_limit"]     = isMinLimitTriggered();
+    doc["max_limit"]     = isMaxLimitTriggered();
+    doc["motor_status"]  = g_isMoving ? "moving" : "idle";
+    doc["ina219_ok"]     = g_ina219_ok;
     doc["timestamp_ms"]  = millis();
 
     String body;

@@ -4,10 +4,16 @@ All secrets and deployment-specific values must come from here — never hardcod
 """
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_ROOT = Path(__file__).resolve().parent.parent.parent
+_DEFAULT_MODEL = str((_ROOT / "ml/models/xgboost_irradiance.joblib").resolve()) if (_ROOT / "ml/models/xgboost_irradiance.joblib").exists() else "ml/models/xgboost_irradiance.joblib"
+_DEFAULT_SCALER = str((_ROOT / "ml/models/scaler.joblib").resolve()) if (_ROOT / "ml/models/scaler.joblib").exists() else "ml/models/scaler.joblib"
+_DEFAULT_META = str((_ROOT / "ml/models/model_meta.json").resolve()) if (_ROOT / "ml/models/model_meta.json").exists() else "ml/models/model_meta.json"
 
 
 class Settings(BaseSettings):
@@ -39,7 +45,7 @@ class Settings(BaseSettings):
     # ── Tracking Logic ────────────────────────────────────────────────────────
     movement_threshold_degrees: float = 3.0
     min_panel_angle: float = 0.0
-    max_panel_angle: float = 70.0
+    max_panel_angle: float = 180.0
     tracking_interval_seconds: int = 600
 
     # ── Site Location ─────────────────────────────────────────────────────────
@@ -49,12 +55,19 @@ class Settings(BaseSettings):
     site_timezone: str = "Asia/Kolkata"
 
     # ── ML Model ──────────────────────────────────────────────────────────────
-    model_path: str = "ml/models/xgboost_irradiance.joblib"
-    scaler_path: str = "ml/models/scaler.joblib"
-    model_meta_path: str = "ml/models/model_meta.json"
+    model_path: str = _DEFAULT_MODEL
+    scaler_path: str = _DEFAULT_SCALER
+    model_meta_path: str = _DEFAULT_META
 
-    # ── Demo Mode ─────────────────────────────────────────────────────────────
+    # ── System Source & Demo Mode ─────────────────────────────────────────────
+    # "real_hardware" or "simulation"
+    system_source: str = "real_hardware"
     demo_mode: bool = True
+
+    # ── Perturb & Observe (P&O) Tracking ─────────────────────────────────────
+    pno_step_degrees: float = 5.0
+    pno_stabilize_seconds: float = 2.0
+    pno_power_threshold_pct: float = 2.0
 
     # ── Security ──────────────────────────────────────────────────────────────
     backend_api_key: str = "change_this_to_a_random_string"

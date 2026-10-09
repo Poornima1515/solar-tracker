@@ -31,10 +31,14 @@ class TelemetryIngest(BaseModel):
     ldr_left: Optional[int] = Field(default=None, ge=0, le=4095)
     ldr_right: Optional[int] = Field(default=None, ge=0, le=4095)
 
-    # Panel position
-    current_angle: Optional[float] = Field(default=None, ge=0.0, le=70.0)
-    target_angle: Optional[float] = Field(default=None, ge=0.0, le=70.0)
+    # Panel position & hardware status
+    current_angle: Optional[float] = Field(default=None, ge=0.0, le=180.0)
+    target_angle: Optional[float] = Field(default=None, ge=0.0, le=180.0)
     mode: Optional[str] = Field(default=None, pattern="^(auto|manual|stopped)$")
+    min_limit: Optional[bool] = Field(default=None, description="True if min limit switch triggered")
+    max_limit: Optional[bool] = Field(default=None, description="True if max limit switch triggered")
+    motor_status: Optional[str] = Field(default=None, description="'idle', 'moving_up', 'moving_down', 'stopped', 'fault'")
+    ina219_ok: Optional[bool] = Field(default=None, description="True if INA219 sensor is communicating")
 
     # Firmware timestamp (ms since boot); optional
     timestamp_ms: Optional[int] = None
@@ -130,10 +134,18 @@ class LatestTelemetryResponse(BaseModel):
     power: Optional[float]
     energy_today: Optional[float]
 
-    # Panel
+    # Panel & Actuator
     current_angle: Optional[float]
     target_angle: Optional[float]
     mode: Optional[str]
+    motor_status: Optional[str] = "idle"
+    auto_status: Optional[str] = "idle"
+    min_limit: Optional[bool] = False
+    max_limit: Optional[bool] = False
+    ina219_ok: Optional[bool] = True
+    best_measured_angle: Optional[float] = None
+    best_measured_power: Optional[float] = None
+    system_source: Optional[str] = "simulation"
 
     # Provenance
     data_source: str

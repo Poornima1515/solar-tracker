@@ -168,6 +168,16 @@ class SimulationSnapshot:
     # Uptime
     tick_count: int
 
+    # Extended P&O & limit tracking
+    commanded_angle: float = 0.0
+    auto_status: str = "idle"
+    search_direction: str = "idle"
+    best_measured_angle: Optional[float] = None
+    best_measured_power: Optional[float] = None
+    min_limit_triggered: bool = False
+    max_limit_triggered: bool = False
+    step_size: float = 5.0
+
 
 @dataclass
 class SimulationConfig:
@@ -209,6 +219,16 @@ class SimulationEngine:
 
         # Motor state
         self._motor = MotorState(current_angle=45.0, target_angle=45.0)
+
+        # Perturb & Observe (P&O) state
+        self._pno_direction: float = 1.0  # +1.0 = UP, -1.0 = DOWN
+        self._pno_last_power: float = 0.0
+        self._pno_best_angle: float = 45.0
+        self._pno_best_power: float = 0.0
+        self._pno_settle_ticks: int = 0
+        self._pno_recheck_ticks: int = 0
+        self._pno_auto_status: str = "searching"
+        self._pno_step: float = 5.0
 
         # Energy accumulator
         self._energy_today_wh: float = 0.0
@@ -455,31 +475,8 @@ class SimulationEngine:
                     f"Wind speed {wind_speed:.1f} m/s — tilt adjustment restricted"
                 )
 
-        # Motor & target angle
-        mode = self._motor.status == MotorStatus.STOPPED and "stopped" or \
-               self._get_mode_str()
-        if self._config.manual_target_angle is not None:
-            target_angle = float(self._config.manual_target_angle)
-        elif is_daytime:
-            target_angle = optimal_angle
-        else:
-            target_angle = 0.0
-
-        # Only move if mode is auto or we have a manual target
-        if mode != "stopped" and not self._config.motor_fault:
-            if abs(target_angle - self._motor.current_angle) >= settings.movement_threshold_degrees:
-                self._step_motor(target_angle, real_dt, speed)
-            else:
-                self._step_motor(self._motor.current_angle, real_dt, speed)
-        else:
-            if self._config.motor_fault:
-                self._motor.status = MotorStatus.FAULT
-                self._motor.direction = "idle"
-                self._motor.speed_pct = 0.0
-
+        # Calculate baseline power at current angle
         current_angle = self._motor.current_angle
-
-        # Power
         if irradiance is not None and irradiance > 0:
             power_w = self._calc_power(irradiance, current_angle, optimal_angle)
             voltage = round(6.5 + (irradiance / 1020.0) * 1.0 + random.gauss(0, 0.02), 2)
@@ -491,6 +488,102 @@ class SimulationEngine:
             current_a = 0.0
             fixed_power = 0.0
 
+        # Mode and limit checks
+        mode = self._motor.status == MotorStatus.STOPPED and "stopped" or \
+               self._get_mode_str()
+
+        min_limit_triggered = (current_angle <= settings.min_panel_angle + 0.1)
+        max_limit_triggered = (current_angle >= settings.max_panel_angle - 0.1)
+        if min_limit_triggered and mode != "stopped":
+            active_faults.append("Minimum Tilt Limit Reached")
+        if max_limit_triggered and mode != "stopped":
+            active_faults.append("Maximum Tilt Limit Reached")
+
+        # Determine target angle & AUTO Perturb and Observe state
+        if mode == "stopped":
+            target_angle = current_angle
+            self._pno_auto_status = "idle"
+        elif self._config.manual_target_angle is not None:
+            target_angle = float(self._config.manual_target_angle)
+            self._pno_auto_status = "manual"
+        elif is_daytime and mode == "auto":
+            # Track best measured
+            if power_w > self._pno_best_power:
+                self._pno_best_power = power_w
+                self._pno_best_angle = current_angle
+
+            if self._pno_recheck_ticks > 0:
+                self._pno_recheck_ticks -= 1
+                self._pno_auto_status = "stabilized"
+                target_angle = current_angle
+            elif self._pno_settle_ticks > 0:
+                self._pno_settle_ticks -= 1
+                target_angle = self._motor.target_angle
+            else:
+                diff_p = power_w - self._pno_last_power
+                rel_p = abs(diff_p) / max(self._pno_last_power, 0.01) if self._pno_last_power > 0 else 1.0
+
+                if self._pno_last_power > 0 and rel_p < (settings.pno_power_threshold_pct / 100.0):
+                    self._pno_auto_status = "stabilized"
+                    self._pno_recheck_ticks = int(max(10, 30 / max(speed, 1)))
+                    target_angle = current_angle
+                    self._emit_event(
+                        EventSeverity.INFO, "tilt",
+                        "Optimal Region Found",
+                        f"Tracking stabilized at {current_angle:.1f}° generating {power_w:.2f} W. Motor: STOPPED."
+                    )
+                elif diff_p >= 0:
+                    self._pno_auto_status = "optimizing"
+                    next_angle = current_angle + self._pno_direction * self._pno_step
+                    if next_angle >= settings.max_panel_angle:
+                        next_angle = settings.max_panel_angle
+                        self._pno_direction = -1.0
+                        self._pno_auto_status = "limit_reached"
+                    elif next_angle <= settings.min_panel_angle:
+                        next_angle = settings.min_panel_angle
+                        self._pno_direction = 1.0
+                        self._pno_auto_status = "limit_reached"
+                    target_angle = next_angle
+                    self._pno_settle_ticks = 2
+                    self._emit_event(
+                        EventSeverity.INFO, "tilt",
+                        "Searching for Better Angle",
+                        f"Power increased to {power_w:.2f} W. Stepping {'UP' if self._pno_direction > 0 else 'DOWN'} to {target_angle:.1f}°."
+                    )
+                else:
+                    self._pno_direction = -self._pno_direction
+                    next_angle = current_angle + self._pno_direction * self._pno_step
+                    next_angle = max(settings.min_panel_angle, min(settings.max_panel_angle, next_angle))
+                    target_angle = next_angle
+                    self._pno_auto_status = "searching"
+                    self._pno_settle_ticks = 2
+                    self._emit_event(
+                        EventSeverity.INFO, "tilt",
+                        "Power Dropped — Reversing Direction",
+                        f"Power fell to {power_w:.2f} W. Reversing to {target_angle:.1f}°."
+                    )
+
+                self._pno_last_power = power_w
+        elif not is_daytime and mode == "auto":
+            target_angle = 0.0
+            self._pno_auto_status = "idle"
+        else:
+            target_angle = current_angle
+
+        # Motor movement step
+        if mode != "stopped" and not self._config.motor_fault:
+            if abs(target_angle - current_angle) >= 0.2:
+                self._step_motor(target_angle, real_dt, speed)
+            else:
+                self._step_motor(current_angle, real_dt, speed)
+        else:
+            if self._config.motor_fault:
+                self._motor.status = MotorStatus.FAULT
+                self._motor.direction = "idle"
+                self._motor.speed_pct = 0.0
+
+        current_angle = self._motor.current_angle
+
         # Energy accumulation (Wh)
         energy_increment = power_w * (real_dt / 3600.0)
         self._energy_today_wh += energy_increment
@@ -500,27 +593,6 @@ class SimulationEngine:
             improvement_pct = round((power_w - fixed_power) / fixed_power * 100.0, 1)
         else:
             improvement_pct = None
-
-        # Periodic events (infrequent)
-        if self._tick_count % int(max(1, 60 / speed)) == 0 and is_daytime:
-            self._emit_event(
-                EventSeverity.INFO, "tilt",
-                "Optimal Angle Recalculated",
-                f"Solar elevation {elevation:.1f}° → optimal tilt {optimal_angle:.1f}°"
-            )
-
-        # Irradiance change events
-        if self._tick_count > 1 and irradiance is not None:
-            prev_snaps = list(self._history)
-            if prev_snaps:
-                prev_irr = prev_snaps[-1].get("irradiance", 0) or 0
-                if abs(irradiance - prev_irr) > 80:
-                    direction_txt = "increased" if irradiance > prev_irr else "decreased"
-                    self._emit_event(
-                        EventSeverity.INFO, "sensor",
-                        f"Solar Irradiance {direction_txt.capitalize()}",
-                        f"Irradiance changed from {prev_irr:.0f} to {irradiance:.0f} W/m²"
-                    )
 
         # Build snapshot
         snap = SimulationSnapshot(
@@ -540,6 +612,14 @@ class SimulationEngine:
             target_angle=round(target_angle, 1),
             optimal_angle=round(optimal_angle, 1),
             tilt_difference=round(target_angle - current_angle, 1),
+            commanded_angle=round(current_angle, 1),
+            auto_status=self._pno_auto_status,
+            search_direction="up" if self._pno_direction > 0 else "down",
+            best_measured_angle=round(self._pno_best_angle, 1) if self._pno_best_power > 0 else None,
+            best_measured_power=round(self._pno_best_power, 2) if self._pno_best_power > 0 else None,
+            min_limit_triggered=min_limit_triggered,
+            max_limit_triggered=max_limit_triggered,
+            step_size=self._pno_step,
             motor=MotorState(
                 status=self._motor.status,
                 current_angle=round(self._motor.current_angle, 1),
@@ -747,6 +827,22 @@ class SimulationEngine:
                 "Manual Tilt Command",
                 f"Target angle set to {angle:.1f}° by operator"
             )
+
+    def manual_jog(self, direction: str, step: float = 5.0) -> float:
+        with self._lock:
+            if self._motor.status == MotorStatus.STOPPED:
+                self._motor.status = MotorStatus.IDLE
+            if direction == "up":
+                target = min(settings.max_panel_angle, self._motor.current_angle + step)
+            else:
+                target = max(settings.min_panel_angle, self._motor.current_angle - step)
+            self._config.manual_target_angle = target
+            self._emit_event(
+                EventSeverity.INFO, "tilt",
+                "Manual Jog Command",
+                f"Jogged {direction.upper()} to {target:.1f}°"
+            )
+            return target
 
     def reset(self) -> None:
         with self._lock:

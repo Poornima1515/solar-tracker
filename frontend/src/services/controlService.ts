@@ -17,6 +17,23 @@ export const controlService = {
   setMode: (mode: string): Promise<{ success: boolean; mode: string; message: string }> =>
     api.post('/control/mode', { mode }).then((r) => r.data),
 
+  jog: (
+    direction: 'up' | 'down',
+    step = 5
+  ): Promise<{
+    success: boolean
+    current_angle: number | null
+    target_angle: number | null
+    status: string
+    min_limit?: boolean
+    max_limit?: boolean
+  }> => api.post('/control/jog', { direction, step }).then((r) => r.data),
+
+  setSource: (
+    source: 'real_hardware' | 'simulation'
+  ): Promise<{ success: boolean; system_source: string; message: string }> =>
+    api.post('/control/source', { source }).then((r) => r.data),
+
   getEvents: (limit = 50): Promise<TrackingEvent[]> =>
     api.get('/control/events', { params: { limit } }).then((r) => r.data),
 

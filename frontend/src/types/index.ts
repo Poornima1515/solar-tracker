@@ -1,3 +1,117 @@
+// ─── Simulation ───────────────────────────────────────────────────────────────
+
+export type WeatherScenario = 'clear' | 'partly_cloudy' | 'cloudy' | 'rain'
+export type MotorStatus = 'idle' | 'moving' | 'fault' | 'stopped'
+export type EventSeverity = 'info' | 'warning' | 'error' | 'critical'
+export type ServiceStatus = 'online' | 'offline' | 'degraded' | 'fault' | 'simulation' | 'starting'
+export type ServiceType = 'sensor' | 'controller' | 'analytics' | 'ml' | 'hardware' | 'simulation'
+
+export interface MotorState {
+  status: MotorStatus
+  current_angle: number
+  target_angle: number
+  direction: 'up' | 'down' | 'idle'
+  speed_pct: number
+  fault_message: string | null
+}
+
+export interface SimulationSnapshot {
+  sim_time: string
+  speed_multiplier: number
+  weather: WeatherScenario
+  is_running: boolean
+  solar_elevation: number
+  solar_azimuth: number
+  is_daytime: boolean
+  irradiance: number | null
+  temperature: number | null
+  humidity: number | null
+  wind_speed: number | null
+  pressure: number
+  current_angle: number
+  target_angle: number
+  optimal_angle: number
+  tilt_difference: number
+  motor: MotorState
+  power_w: number | null
+  voltage: number | null
+  current_a: number | null
+  energy_today_wh: number
+  mode: 'auto' | 'manual' | 'stopped'
+  hardware_connected: boolean
+  sim_mode: boolean
+  fixed_panel_power_w: number | null
+  improvement_pct: number | null
+  active_faults: string[]
+  tick_count: number
+  min_limit_triggered?: boolean
+  max_limit_triggered?: boolean
+  auto_status?: string
+  best_measured_angle?: number | null
+  best_measured_power?: number | null
+  search_direction?: number | null
+  step_size?: number | null
+  commanded_angle?: number | null
+}
+
+export interface SimulationConfig {
+  speed_multiplier: number
+  weather: WeatherScenario
+  temperature_override: number | null
+  irradiance_override: number | null
+  wind_speed: number
+  motor_fault: boolean
+  sensor_fault: boolean
+  comm_fault: boolean
+  manual_target_angle: number | null
+  sim_start_hour: number
+}
+
+export interface SimulationState {
+  snapshot: SimulationSnapshot | null
+  config: SimulationConfig | null
+}
+
+export interface SystemEvent {
+  id: number
+  timestamp: string
+  severity: EventSeverity
+  category: string
+  title: string
+  detail: string
+}
+
+export interface SimHistoryPoint {
+  sim_time: string
+  irradiance: number | null
+  temperature: number | null
+  power_w: number | null
+  current_angle: number | null
+  target_angle: number | null
+  optimal_angle: number | null
+  solar_elevation: number | null
+  energy_wh: number | null
+}
+
+export interface DemoScenario {
+  id: string
+  description: string
+}
+
+export interface ServiceDescriptor {
+  service_id: string
+  service_name: string
+  service_type: ServiceType
+  description: string
+  status: ServiceStatus
+  health_endpoint: string | null
+  data_endpoint: string | null
+  capabilities: string[]
+  last_seen: string | null
+  version: string | null
+  metadata: Record<string, unknown>
+}
+
 // ─── Device ───────────────────────────────────────────────────────────────────
 
 export type DeviceStatus = 'online' | 'offline' | 'error'
@@ -34,6 +148,17 @@ export interface LatestTelemetry {
   mode: PanelMode | null
   data_source: DataSource
   hardware_online: boolean
+  min_limit?: boolean
+  max_limit?: boolean
+  motor_status?: string
+  ina219_ok?: boolean
+  system_source?: 'real_hardware' | 'simulation'
+  auto_status?: string | null
+  best_measured_angle?: number | null
+  best_measured_power?: number | null
+  search_direction?: number | null
+  step_size?: number | null
+  active_faults?: string[]
 }
 
 export interface SensorReadingHistory {
@@ -97,6 +222,14 @@ export interface ControlState {
   movement_threshold: number
   hardware_online: boolean
   demo_mode: boolean
+  system_source?: 'real_hardware' | 'simulation'
+  motor_status?: string
+  auto_status?: string
+  min_limit_triggered?: boolean
+  max_limit_triggered?: boolean
+  ina219_ok?: boolean
+  best_measured_angle?: number | null
+  best_measured_power?: number | null
 }
 
 export interface TiltCommandResponse {

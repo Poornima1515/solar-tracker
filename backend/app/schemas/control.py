@@ -27,11 +27,20 @@ class ModeRequest(BaseModel):
     mode: str = Field(..., pattern="^(auto|manual|stopped)$")
 
 
+class JogCommandRequest(BaseModel):
+    direction: str = Field(..., pattern="^(up|down)$", description="'up' to increase tilt, 'down' to decrease")
+    step: float = Field(default=5.0, ge=0.5, le=30.0, description="Step angle in degrees")
+
+
+class SourceCommandRequest(BaseModel):
+    source: str = Field(..., pattern="^(real_hardware|simulation)$", description="System active source")
+
+
 class TiltCommandResponse(BaseModel):
     success: bool
     current_angle: Optional[float]
     target_angle: Optional[float]
-    status: str          # position_reached | moving | stopped | error | hardware_offline
+    status: str          # position_reached | moving | stopped | error | hardware_offline | limit_reached
     message: Optional[str] = None
 
 
@@ -39,11 +48,19 @@ class ControlStateResponse(BaseModel):
     current_angle: Optional[float]
     target_angle: Optional[float]
     mode: str
+    system_source: str = "simulation"
     min_angle: float
     max_angle: float
     movement_threshold: float
     hardware_online: bool
     demo_mode: bool
+    motor_status: str = "idle"
+    auto_status: str = "idle"
+    min_limit_triggered: bool = False
+    max_limit_triggered: bool = False
+    ina219_ok: bool = True
+    best_measured_angle: Optional[float] = None
+    best_measured_power: Optional[float] = None
 
 
 class StopResponse(BaseModel):
